@@ -35,6 +35,7 @@ postgres)
     mkdir -p "$pgrun" "$STATE/postgres"
     chown snap_daemon:snap_daemon "$STATE/postgres" "$pgrun"
     if [ ! -s "$pgdata/PG_VERSION" ]; then
+        rm -rf "$pgdata"
         pwfile="$(mktemp)"
         printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
         chown snap_daemon "$pwfile"

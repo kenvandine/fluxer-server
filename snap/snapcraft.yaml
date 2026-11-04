@@ -283,6 +283,7 @@ parts:
       cd "$CRAFT_PART_SRC"
       # Strict confinement denies /sys/fs/cgroup; treat EACCES like "missing"
       # so the hardware stats fall back to system-wide readings.
+      git checkout -- go.mod go.sum
       go mod download github.com/livekit/protocol
       proto="$(go list -m -f '{{.Dir}}' github.com/livekit/protocol)"
       rm -rf "$CRAFT_PART_BUILD/protocol"
@@ -290,7 +291,11 @@ parts:
       chmod -R u+w "$CRAFT_PART_BUILD/protocol"
       sed -i 's/errors.Is(err, os.ErrNotExist):/errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission):/' \
         "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go" "$CRAFT_PART_BUILD/protocol/utils/hwstats/memory_linux.go"
+      # AppArmor allows lstat but denies open, so probe with open.
+      sed -i 's/_, err := os.Lstat(path)/f, err := os.Open(path)\n\tif err == nil {\n\t\tf.Close()\n\t}/' \
+        "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go"
       grep -q ErrPermission "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go"
+      grep -q "os.Open(path)" "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go"
       go mod edit -replace "github.com/livekit/protocol=$CRAFT_PART_BUILD/protocol"
       CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$CRAFT_PART_INSTALL/bin/livekit-server" ./cmd/server
 
