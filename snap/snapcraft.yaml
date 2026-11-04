@@ -29,7 +29,7 @@ description: |
   environment variable, for example
   `snap set fluxer-server env.FLUXER_EMAIL_ENABLED=true`.
 license: AGPL-3.0-or-later
-grade: devel
+grade: stable
 confinement: strict
 assumes: [snapd2.61]
 
