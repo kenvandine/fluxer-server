@@ -1,7 +1,7 @@
 #!/bin/bash
 # Shared helpers for the fluxer-server snap. Sourced by hooks and services.
 
-export PATH="$SNAP/usr/bin:$SNAP/bin:$SNAP/usr/sbin:$SNAP/sbin:$PATH"
+export PATH="$SNAP/opt/node/bin:$SNAP/usr/bin:$SNAP/bin:$SNAP/usr/sbin:$SNAP/sbin:$PATH"
 triplet="${SNAP_LAUNCHER_ARCH_TRIPLET:-$(uname -m)-linux-gnu}"
 export LD_LIBRARY_PATH="$SNAP/opt/native/lib:$SNAP/usr/lib/$triplet:$SNAP/lib/$triplet:$SNAP/usr/lib/postgresql/18/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SSL_CERT_FILE="${SSL_CERT_FILE:-$SNAP/etc/ssl/certs/ca-certificates.crt}"
