@@ -446,6 +446,11 @@ parts:
       cp -a fluxer_api/dist "$out/fluxer_api/dist"
       cp -a fluxer_api/bin "$out/fluxer_api/bin"
       cp -a tsconfigs "$out/tsconfigs"
+      # Drop symlinks that point outside the snap (e.g. back to the build source).
+      find "$out" -xtype l -delete
+      find "$out" -type l | while read -r l; do
+        case "$(readlink -f "$l")" in "$out"/*) ;; *) rm -f "$l" ;; esac
+      done
 
   fluxer-app:
     after: [node, rust-toolchain]
