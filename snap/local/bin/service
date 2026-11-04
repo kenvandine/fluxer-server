@@ -124,7 +124,18 @@ seaweedfs)
     trap 'kill -TERM "$weed" 2>/dev/null' TERM INT
     master="127.0.0.1:$PORT_SEAWEED_MASTER"
     buckets="$FLUXER_S3_BUCKET_CDN $FLUXER_S3_BUCKET_UPLOADS $FLUXER_S3_BUCKET_REPORTS $FLUXER_S3_BUCKET_HARVESTS"
-    shell() { echo "$1" | timeout 10 weed shell -master="$master" 2>&1; }
+    shell() {
+        local out wp
+        out="$(mktemp)"
+        weed shell -master="$master" > "$out" 2>&1 <<< "$1" &
+        wp=$!
+        ( sleep 15; kill "$wp" 2>/dev/null ) &
+        local wd=$!
+        wait "$wp" 2>/dev/null || true
+        kill "$wd" 2>/dev/null || true
+        cat "$out"
+        rm -f "$out"
+    }
     ready=0
     for _ in $(seq 1 90); do
         kill -0 "$weed" 2>/dev/null || break
@@ -215,7 +226,9 @@ gateway)
     export FLUXER_GATEWAY_MEDIA_PROXY_ENDPOINT="$FLUXER_MEDIA_ENDPOINT"
     export FLUXER_GATEWAY_STATIC_CDN_ENDPOINT="$FLUXER_STATIC_CDN_ENDPOINT"
     export FLUXER_ERLANG_NODE_NAME="fluxer_gateway@127.0.0.1" FLUXER_ERLANG_DIST_PORT="$PORT_GATEWAY_DIST"
-    cpus="$(nproc)"
+    cpus=0
+    while read -r l; do [[ "$l" == processor* ]] && cpus=$((cpus + 1)); done < /proc/cpuinfo
+    [ "$cpus" -gt 0 ] || cpus=2
     sched=$((cpus < 2 ? 2 : (cpus > 16 ? 16 : cpus)))
     export FLUXER_ERLANG_SCHEDULERS="${FLUXER_ERLANG_SCHEDULERS:-$sched}"
     export FLUXER_ERLANG_DIRTY_CPU_SCHEDULERS="${FLUXER_ERLANG_DIRTY_CPU_SCHEDULERS:-$((sched / 2))}"

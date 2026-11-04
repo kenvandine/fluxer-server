@@ -274,15 +274,24 @@ parts:
 
   livekit:
     plugin: nil
-    source:
-      - on amd64: https://github.com/livekit/livekit/releases/download/v1.12.0/livekit_1.12.0_linux_amd64.tar.gz
-      - on arm64: https://github.com/livekit/livekit/releases/download/v1.12.0/livekit_1.12.0_linux_arm64.tar.gz
-    source-checksum:
-      - on amd64: sha256/9b89eb169c6c5795393bad6b52a9d0c73640a5993b37162558b4e249e5fe3aee
-      - on arm64: sha256/e72adb7d824b300ce54dde7c80c901d4062d1ca2f74b14d6fa56cbe32cc2b07a
+    source: https://github.com/livekit/livekit.git
+    source-tag: v1.12.0
+    source-depth: 1
+    build-packages: [golang-go, git, ca-certificates]
     override-build: |
       set -eux
-      install -Dm755 "$(find "$CRAFT_PART_SRC" -type f -name livekit-server | head -n1)" "$CRAFT_PART_INSTALL/bin/livekit-server"
+      cd "$CRAFT_PART_SRC"
+      # Strict confinement denies /sys/fs/cgroup; treat EACCES like "missing"
+      # so the hardware stats fall back to system-wide readings.
+      proto="$(go list -m -f '{{.Dir}}' github.com/livekit/protocol)"
+      rm -rf "$CRAFT_PART_BUILD/protocol"
+      cp -r "$proto" "$CRAFT_PART_BUILD/protocol"
+      chmod -R u+w "$CRAFT_PART_BUILD/protocol"
+      sed -i 's/errors.Is(err, os.ErrNotExist):/errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission):/' \
+        "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go" "$CRAFT_PART_BUILD/protocol/utils/hwstats/memory_linux.go"
+      grep -q ErrPermission "$CRAFT_PART_BUILD/protocol/utils/hwstats/cpu_linux.go"
+      go mod edit -replace "github.com/livekit/protocol=$CRAFT_PART_BUILD/protocol"
+      CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$CRAFT_PART_INSTALL/bin/livekit-server" ./cmd/server
 
   seaweedfs:
     plugin: nil
