@@ -1,0 +1,58 @@
+name: Check for new Fluxer release
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      updated: ${{ steps.update.outputs.updated }}
+      version: ${{ steps.update.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update pinned version
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest="$(gh api --paginate 'repos/fluxerapp/fluxer/releases?per_page=100' \
+            --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(startswith("fluxer-release@"))' \
+            | head -n1)"
+          [ -n "$latest" ] || { echo "no fluxer-release tag found" >&2; exit 1; }
+          new="${latest#fluxer-release@}"
+          current="$(sed -n 's/^version: "\(.*\)"$/\1/p' snap/snapcraft.yaml)"
+          echo "current=$current latest=$new"
+          if [ "$new" = "$current" ]; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -i \
+            -e "s/^version: \".*\"$/version: \"$new\"/" \
+            -e "s/fluxer-release@$current/fluxer-release@$new/" \
+            snap/snapcraft.yaml
+          if grep -q "$current" snap/snapcraft.yaml; then
+            echo "stale version references remain" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update Fluxer to $new"
+          git push
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.updated == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      channel: candidate
+    secrets: inherit

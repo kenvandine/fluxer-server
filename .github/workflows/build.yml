@@ -1,0 +1,84 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - snap/**
+      - .github/workflows/build.yml
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Store channel to release to
+        default: candidate
+        type: string
+  workflow_call:
+    inputs:
+      channel:
+        description: Store channel to release to
+        default: candidate
+        type: string
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Build snap
+        id: build
+        uses: canonical/action-build@v1
+        with:
+          snapcraft-channel: latest/stable
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snap-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish (${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: snap-${{ matrix.arch }}
+
+      - name: Locate snap
+        id: snap
+        run: echo "file=$(ls ./*.snap | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - uses: canonical/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snap.outputs.file }}
+          release: ${{ inputs.channel || 'candidate' }}
