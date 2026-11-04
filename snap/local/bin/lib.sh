@@ -149,6 +149,7 @@ render_env() {
             [FLUXER_POSTGRES_USERNAME]=fluxer
             [FLUXER_POSTGRES_PASSWORD]="$POSTGRES_PASSWORD"
             [FLUXER_POSTGRES_SSL]=false
+            [FLUXER_POSTGRES_URL]="postgres://fluxer:$POSTGRES_PASSWORD@127.0.0.1:$PORT_POSTGRES/fluxer"
             [FLUXER_KV_URL]="redis://127.0.0.1:$PORT_VALKEY/0"
             [FLUXER_NATS_URL]="nats://127.0.0.1:$PORT_NATS"
             [FLUXER_NATS_JETSTREAM_URL]="nats://127.0.0.1:$PORT_NATS"
