@@ -283,6 +283,7 @@ parts:
       cd "$CRAFT_PART_SRC"
       # Strict confinement denies /sys/fs/cgroup; treat EACCES like "missing"
       # so the hardware stats fall back to system-wide readings.
+      go mod download github.com/livekit/protocol
       proto="$(go list -m -f '{{.Dir}}' github.com/livekit/protocol)"
       rm -rf "$CRAFT_PART_BUILD/protocol"
       cp -r "$proto" "$CRAFT_PART_BUILD/protocol"
