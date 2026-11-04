@@ -197,6 +197,7 @@ apps:
     command: bin/setup-token
   sign-in-link:
     command: bin/sign-in-link
+    plugs: [network]
   psql:
     command: bin/psql
     plugs: [network]
