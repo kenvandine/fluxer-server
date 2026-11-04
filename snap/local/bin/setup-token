@@ -1,0 +1,5 @@
+#!/bin/bash
+set -eu
+. "$SNAP/bin/lib.sh"
+[ -f "$SECRETS_FILE" ] || die "not configured yet: sudo snap set fluxer-server domain=<your domain>"
+sed -n 's/^FLUXER_SETUP_TOKEN=//p' "$SECRETS_FILE"

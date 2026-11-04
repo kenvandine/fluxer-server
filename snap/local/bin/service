@@ -1,0 +1,286 @@
+#!/bin/bash
+# Entry point of every daemon: bin/service <name>
+set -eu
+. "$SNAP/bin/lib.sh"
+
+name="${1:?usage: service <name>}"
+load_env
+
+mkdir -p "$STATE/run" "$STATE/home/$name"
+export HOME="$STATE/home/$name"
+cd "$HOME"
+
+svc_common_env() {
+    export RUST_LOG="${RUST_LOG:-info}"
+    export TOKIO_WORKER_THREADS="${FLUXER_TOKIO_WORKER_THREADS:-2}"
+    export MALLOC_ARENA_MAX=2
+    export NO_PROXY="127.0.0.1,localhost,::1${NO_PROXY:+,$NO_PROXY}"
+    export no_proxy="$NO_PROXY"
+}
+
+run_svc() {
+    # run_svc NAME BINARY PORT [needs-postgres]
+    wait_port "$PORT_NATS" nats
+    [ "${4:-}" = postgres ] && wait_port "$PORT_POSTGRES" postgres
+    svc_common_env
+    export FLUXER_SVC_NAME="$1" FLUXER_SVC_MODE=combined FLUXER_SVC_PORT="$3" \
+        FLUXER_SVC_LISTEN_HOST=127.0.0.1 FLUXER_SVC_SHARD_COUNT=1
+    exec "$FLUXER_HOME/bin/$2"
+}
+
+case "$name" in
+postgres)
+    pgdata="$STATE/postgres/data"
+    pgrun="$STATE/postgres/run"
+    mkdir -p "$pgrun" "$STATE/postgres"
+    chown snap_daemon:snap_daemon "$STATE/postgres" "$pgrun"
+    if [ ! -s "$pgdata/PG_VERSION" ]; then
+        pwfile="$(mktemp)"
+        printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
+        chown snap_daemon "$pwfile"
+        setpriv --reuid snap_daemon --regid snap_daemon --clear-groups \
+            "$PG_BIN/initdb" -D "$pgdata" -U fluxer --pwfile="$pwfile" \
+            --auth-local=trust --auth-host=scram-sha-256 \
+            --encoding=UTF8 --locale=C.UTF-8
+        rm -f "$pwfile"
+    fi
+    clear_ready postgres
+    setpriv --reuid snap_daemon --regid snap_daemon --clear-groups \
+        "$PG_BIN/postgres" -D "$pgdata" \
+        -c listen_addresses=127.0.0.1 -c port="$PORT_POSTGRES" \
+        -c unix_socket_directories="$pgrun" \
+        -c dynamic_shared_memory_type=mmap -c huge_pages=off \
+        -c max_connections="${FLUXER_POSTGRES_SERVER_MAX_CONNECTIONS:-150}" \
+        -c shared_buffers="${FLUXER_POSTGRES_SHARED_BUFFERS:-256MB}" \
+        -c effective_cache_size="${FLUXER_POSTGRES_EFFECTIVE_CACHE_SIZE:-1GB}" \
+        -c work_mem=8MB -c maintenance_work_mem=128MB \
+        -c random_page_cost=1.1 -c effective_io_concurrency=200 \
+        -c jit=off -c wal_compression=zstd -c track_io_timing=on \
+        -c autovacuum_vacuum_scale_factor=0.05 -c autovacuum_analyze_scale_factor=0.02 \
+        -c shared_preload_libraries=pg_stat_statements &
+    pg=$!
+    trap 'kill -TERM "$pg" 2>/dev/null' TERM INT
+    for _ in $(seq 1 120); do
+        "$PG_BIN/pg_isready" -q -h "$pgrun" -p "$PORT_POSTGRES" && break
+        sleep 1
+    done
+    if ! "$PG_BIN/psql" -h "$pgrun" -p "$PORT_POSTGRES" -U fluxer -d postgres -Atc \
+        "SELECT 1 FROM pg_database WHERE datname = 'fluxer'" | grep -q 1; then
+        "$PG_BIN/createdb" -h "$pgrun" -p "$PORT_POSTGRES" -U fluxer fluxer
+    fi
+    mark_ready postgres
+    wait "$pg" || true
+    wait "$pg"
+    ;;
+
+valkey)
+    mkdir -p "$STATE/valkey"
+    chown snap_daemon:snap_daemon "$STATE/valkey"
+    as_daemon valkey-server --bind 127.0.0.1 --port "$PORT_VALKEY" --dir "$STATE/valkey" \
+        --appendonly yes --appendfsync everysec --save "" \
+        --maxmemory "${FLUXER_VALKEY_MAXMEMORY:-192mb}" --maxmemory-policy noeviction \
+        --daemonize no --logfile ""
+    ;;
+
+nats)
+    mkdir -p "$STATE/nats"
+    cat > "$STATE/nats.conf" <<EOF
+host: 127.0.0.1
+port: $PORT_NATS
+http: 127.0.0.1:$PORT_NATS_HTTP
+jetstream {
+  store_dir: "$STATE/nats"
+  max_memory_store: ${FLUXER_NATS_MAX_MEMORY_STORE:-64MB}
+  max_file_store: ${FLUXER_NATS_MAX_FILE_STORE:-10GB}
+}
+EOF
+    export GOMEMLIMIT="${FLUXER_NATS_GOMEMLIMIT:-200MiB}"
+    exec nats-server -c "$STATE/nats.conf"
+    ;;
+
+meilisearch)
+    mkdir -p "$STATE/meili"
+    cd "$STATE/meili"
+    export MEILI_ENV=production MEILI_NO_ANALYTICS=true MEILI_UPGRADE_DB=true \
+        MEILI_HTTP_ADDR="127.0.0.1:$PORT_MEILI" MEILI_DB_PATH="$STATE/meili/data.ms" \
+        MEILI_DUMP_DIR="$STATE/meili/dumps" MEILI_SNAPSHOT_DIR="$STATE/meili/snapshots" \
+        MEILI_MAX_INDEXING_MEMORY="${FLUXER_MEILISEARCH_MAX_INDEXING_MEMORY:-256mb}" \
+        MEILI_MAX_INDEXING_THREADS="${FLUXER_MEILISEARCH_MAX_INDEXING_THREADS:-2}" \
+        MEILI_LOG_LEVEL=WARN MEILI_MASTER_KEY="$MEILI_MASTER_KEY"
+    exec meilisearch
+    ;;
+
+seaweedfs)
+    mkdir -p "$STATE/seaweedfs"
+    clear_ready seaweedfs
+    export GOMEMLIMIT="${FLUXER_SEAWEEDFS_GOMEMLIMIT:-1536MiB}" WEED_MASTER_VOLUME_GROWTH_COPY_1=1
+    weed server -s3 -s3.iam=false -dir="$STATE/seaweedfs" \
+        -ip=127.0.0.1 -ip.bind=127.0.0.1 \
+        -master.port="$PORT_SEAWEED_MASTER" -volume.port="$PORT_SEAWEED_VOLUME" \
+        -filer.port="$PORT_SEAWEED_FILER" -s3.port="$PORT_SEAWEED_S3" \
+        -master.telemetry=false -master.volumeSizeLimitMB=1024 -master.garbageThreshold=0.1 \
+        -volume.max=10000 -s3.concurrentFileUploadLimit=5 &
+    weed=$!
+    trap 'kill -TERM "$weed" 2>/dev/null' TERM INT
+    master="127.0.0.1:$PORT_SEAWEED_MASTER"
+    buckets="$FLUXER_S3_BUCKET_CDN $FLUXER_S3_BUCKET_UPLOADS $FLUXER_S3_BUCKET_REPORTS $FLUXER_S3_BUCKET_HARVESTS"
+    shell() { echo "$1" | timeout 10 weed shell -master="$master" 2>&1; }
+    ready=0
+    for _ in $(seq 1 90); do
+        kill -0 "$weed" 2>/dev/null || break
+        if ! (exec 3<>"/dev/tcp/127.0.0.1/$PORT_SEAWEED_MASTER") 2>/dev/null; then sleep 2; continue; fi
+        listed="$(shell s3.bucket.list)"
+        missing=""
+        for b in $buckets; do
+            echo "$listed" | grep -q "^[[:space:]]*$b[[:space:]]" || missing="$missing $b"
+        done
+        if [ -n "$missing" ]; then
+            for b in $missing; do shell "s3.bucket.create -name $b" >/dev/null; done
+            sleep 2
+            continue
+        fi
+        if shell "s3.configure -user=fluxer -access_key=$FLUXER_S3_ACCESS_KEY -secret_key=$FLUXER_S3_SECRET_KEY -actions=Admin,Read,Write,List,Tagging -apply" >/dev/null &&
+            shell "fs.configure -locationPrefix=/buckets/$FLUXER_S3_BUCKET_UPLOADS/ -ttl=1d -apply" >/dev/null; then
+            ready=1
+            break
+        fi
+        sleep 2
+    done
+    [ "$ready" = 1 ] || { kill "$weed" 2>/dev/null; die "could not initialise SeaweedFS buckets"; }
+    mark_ready seaweedfs
+    wait "$weed" || true
+    wait "$weed"
+    ;;
+
+livekit)
+    cat > "$STATE/livekit.yaml" <<EOF
+port: $PORT_LIVEKIT
+bind_addresses: ["127.0.0.1"]
+log_level: info
+rtc:
+  tcp_port: $LIVEKIT_TCP_PORT
+  udp_port: $LIVEKIT_UDP_PORT
+  use_external_ip: true
+  node_ip: "$LIVEKIT_NODE_IP"
+  stun_servers:
+    - stun.l.google.com:19302
+    - stun1.l.google.com:19302
+  turn_servers: $FLUXER_LIVEKIT_TURN_SERVERS
+webhook:
+  api_key: $LIVEKIT_API_KEY
+  urls:
+    - http://127.0.0.1:$PORT_API/webhooks/livekit
+EOF
+    chmod 600 "$STATE/livekit.yaml"
+    export LIVEKIT_KEYS="$LIVEKIT_API_KEY: $LIVEKIT_API_SECRET" GOMEMLIMIT=435MiB
+    exec livekit-server --config "$STATE/livekit.yaml"
+    ;;
+
+snowflakes) run_svc snowflakes fluxer-snowflakes 18091 ;;
+users) run_svc users fluxer-users 18092 postgres ;;
+gifs) run_svc gifs fluxer-gifs 18093 ;;
+messages) run_svc messages fluxer-messages 18094 postgres ;;
+unfurl)
+    export FLUXER_MEDIA_PROXY_ENDPOINT="http://127.0.0.1:$PORT_MEDIA"
+    run_svc unfurl fluxer-unfurl 18095
+    ;;
+
+api | worker)
+    wait_port "$PORT_POSTGRES" postgres
+    wait_port "$PORT_VALKEY" valkey
+    wait_port "$PORT_NATS" nats
+    wait_port "$PORT_MEILI" meilisearch
+    wait_ready seaweedfs
+    for p in 18091 18092 18093 18094; do wait_port "$p" "svc $p"; done
+    export HOME="$STATE/home/api"
+    mkdir -p "$HOME"
+    cd "$FLUXER_HOME/fluxer_api"
+    export BUILD_VERSION="$SNAP_VERSION"
+    export NODE_OPTIONS="--max-old-space-size-percentage=${FLUXER_API_NODE_HEAP_PERCENT:-60}"
+    if [ "$name" = api ]; then
+        export FLUXER_API_PORT="$PORT_API" FLUXER_API_EMBEDDED_WORKER=false
+        exec node dist/AppEntrypoint.js
+    fi
+    export FLUXER_API_WORKER_MODE=all_lanes FLUXER_API_WORKER_ENABLE_CRON_SCHEDULER=true
+    exec node dist/WorkerEntrypoint.js
+    ;;
+
+gateway)
+    wait_port "$PORT_NATS" nats
+    wait_port "$PORT_VALKEY" valkey
+    gwhome="$STATE/gateway"
+    mkdir -p "$gwhome/tmp"
+    export HOME="$gwhome"
+    export FLUXER_GATEWAY_PORT="$PORT_GATEWAY"
+    export FLUXER_GATEWAY_MEDIA_PROXY_ENDPOINT="$FLUXER_MEDIA_ENDPOINT"
+    export FLUXER_GATEWAY_STATIC_CDN_ENDPOINT="$FLUXER_STATIC_CDN_ENDPOINT"
+    export FLUXER_ERLANG_NODE_NAME="fluxer_gateway@127.0.0.1" FLUXER_ERLANG_DIST_PORT="$PORT_GATEWAY_DIST"
+    cpus="$(nproc)"
+    sched=$((cpus < 2 ? 2 : (cpus > 16 ? 16 : cpus)))
+    export FLUXER_ERLANG_SCHEDULERS="${FLUXER_ERLANG_SCHEDULERS:-$sched}"
+    export FLUXER_ERLANG_DIRTY_CPU_SCHEDULERS="${FLUXER_ERLANG_DIRTY_CPU_SCHEDULERS:-$((sched / 2))}"
+    export FLUXER_ERLANG_DIRTY_IO_SCHEDULERS="${FLUXER_ERLANG_DIRTY_IO_SCHEDULERS:-$((sched < 2 ? 2 : (sched > 4 ? 4 : sched)))}"
+    export RELX_REPLACE_OS_VARS=true RELX_OUT_FILE_PATH="$gwhome/tmp" RELEASE_TMP="$gwhome/tmp" \
+        RELEASE_MUTABLE_DIR="$gwhome/tmp" ERL_EPMD_ADDRESS=127.0.0.1 \
+        ERL_AFLAGS="-kernel inet_dist_use_interface {127,0,0,1}"
+    ulimit -n 65536 2>/dev/null || true
+    exec "$SNAP/opt/fluxer_gateway/bin/fluxer_gateway" foreground
+    ;;
+
+media-proxy)
+    wait_port "$PORT_NATS" nats
+    wait_ready seaweedfs
+    svc_common_env
+    mkdir -p "$STATE/media_proxy_storage" "$STATE/media_proxy_tmp"
+    export FLUXER_MEDIA_PROXY_HOST=127.0.0.1 FLUXER_MEDIA_PROXY_PORT="$PORT_MEDIA" \
+        FLUXER_MEDIA_PROXY_MODE=upload FLUXER_MEDIA_PROXY_STORAGE_BACKEND=s3 \
+        FLUXER_MEDIA_PROXY_CORS_ALLOWED_ORIGINS="$FLUXER_PUBLIC_ORIGIN" \
+        FLUXER_S3_READ_SIGNED=true TMPDIR="$STATE/media_proxy_tmp" \
+        VIPS_CONCURRENCY=1 VIPS_DISC_THRESHOLD=1g TOKIO_WORKER_THREADS="${FLUXER_MEDIA_PROXY_TOKIO_WORKER_THREADS:-4}"
+    jemalloc="$(ls "$SNAP"/usr/lib/*/libjemalloc.so.2 2>/dev/null | head -n1 || true)"
+    [ -z "$jemalloc" ] || export LD_PRELOAD="$jemalloc"
+    exec "$FLUXER_HOME/bin/fluxer-media-proxy"
+    ;;
+
+push)
+    wait_port "$PORT_NATS" nats
+    svc_common_env
+    export FLUXER_PUSH_SERVICE_HOST=127.0.0.1 FLUXER_PUSH_SERVICE_PORT="$PORT_PUSH"
+    exec "$FLUXER_HOME/bin/fluxer-push"
+    ;;
+
+app-proxy)
+    wait_port "$PORT_API" api
+    svc_common_env
+    export FLUXER_APP_PROXY_HOST=127.0.0.1 FLUXER_APP_PROXY_PORT="$PORT_APP_PROXY" \
+        FLUXER_STATIC_DIR="$FLUXER_HOME/app-proxy/static" \
+        DISCOVERY_UPSTREAM_URL="http://127.0.0.1:$PORT_DISCOVERY/.well-known/fluxer" \
+        DISCOVERY_REFRESH_INTERVAL_MS=5000 FLUXER_SELF_HOSTED=true
+    jemalloc="$(ls "$SNAP"/usr/lib/*/libjemalloc.so.2 2>/dev/null | head -n1 || true)"
+    [ -z "$jemalloc" ] || export LD_PRELOAD="$jemalloc"
+    exec "$FLUXER_HOME/bin/fluxer_app_proxy"
+    ;;
+
+admin)
+    wait_port "$PORT_API" api
+    svc_common_env
+    export FLUXER_ADMIN_HOST=127.0.0.1 FLUXER_ADMIN_PORT="$PORT_ADMIN" \
+        FLUXER_API_ENDPOINT="http://127.0.0.1:$PORT_API" FLUXER_API_PUBLIC_ENDPOINT="$FLUXER_PUBLIC_ORIGIN/api"
+    exec "$FLUXER_HOME/bin/fluxer_admin"
+    ;;
+
+edge)
+    wait_port "$PORT_API" api
+    wait_port "$PORT_GATEWAY" gateway
+    mkdir -p "$STATE/caddy/data" "$STATE/caddy/config" "$STATE/caddy.d/sites"
+    export XDG_DATA_HOME="$STATE/caddy/data" XDG_CONFIG_HOME="$STATE/caddy/config" \
+        FLUXER_STATIC_ROOT="$FLUXER_HOME/static" FLUXER_CADDY_DIR="$STATE/caddy.d" \
+        PORT_API PORT_GATEWAY PORT_MEDIA PORT_APP_PROXY PORT_ADMIN PORT_LIVEKIT PORT_DISCOVERY
+    export FLUXER_EDGE_TRUSTED_PROXIES="${FLUXER_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}"
+    exec caddy run --config "$SNAP/etc/Caddyfile" --adapter caddyfile
+    ;;
+
+*)
+    die "unknown service: $name"
+    ;;
+esac

@@ -1,0 +1,7 @@
+#!/bin/bash
+# Open a psql shell on the Fluxer database.
+set -eu
+. "$SNAP/bin/lib.sh"
+load_env
+export PGPASSWORD="$POSTGRES_PASSWORD"
+exec "$PG_BIN/psql" -h 127.0.0.1 -p "$PORT_POSTGRES" -U fluxer -d fluxer "$@"

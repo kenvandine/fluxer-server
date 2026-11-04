@@ -1,0 +1,22 @@
+#!/bin/bash
+set -eu
+. "$SNAP/bin/lib.sh"
+
+# The domain is required before anything can run.
+domain="$(snapctl get domain)"
+[ -n "$domain" ] || exit 0
+
+case "$domain" in
+*[!A-Za-z0-9.-]* | .* | *. | "") echo "invalid domain: $domain" >&2; exit 1 ;;
+esac
+
+old=""
+[ -f "$ENV_FILE" ] && old="$(sha256sum "$ENV_FILE" | cut -d' ' -f1)"
+render_env
+new="$(sha256sum "$ENV_FILE" | cut -d' ' -f1)"
+
+if [ -z "$old" ]; then
+    snapctl start --enable "$SNAP_INSTANCE_NAME" || true
+elif [ "$old" != "$new" ]; then
+    snapctl restart "$SNAP_INSTANCE_NAME" || true
+fi

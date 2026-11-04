@@ -1,0 +1,92 @@
+{
+	servers {
+		trusted_proxies static {$FLUXER_EDGE_TRUSTED_PROXIES}
+		trusted_proxies_strict
+		protocols h1 h2 h3
+	}
+	{$EDGE_GLOBAL_OPTIONS}
+}
+
+(upstream) {
+	reverse_proxy {args[0]} {
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Real-IP {client_ip}
+		header_up -Forwarded
+	}
+}
+
+{$EDGE_SITE_ADDRESS} {
+	{$EDGE_BIND}
+	{$EDGE_TLS_DIRECTIVE}
+	encode zstd gzip
+
+	handle /_health {
+		respond "OK" 200
+	}
+
+	handle_path /api/* {
+		import upstream 127.0.0.1:{$PORT_API}
+	}
+
+	handle /gateway {
+		rewrite * /
+		import upstream 127.0.0.1:{$PORT_GATEWAY}
+	}
+
+	handle_path /gateway/* {
+		import upstream 127.0.0.1:{$PORT_GATEWAY}
+	}
+
+	handle_path /media/* {
+		import upstream 127.0.0.1:{$PORT_MEDIA}
+	}
+
+	handle_path /livekit/* {
+		import upstream 127.0.0.1:{$PORT_LIVEKIT}
+	}
+
+	handle /admin {
+		rewrite * /
+		import upstream 127.0.0.1:{$PORT_ADMIN}
+	}
+
+	handle_path /admin/* {
+		import upstream 127.0.0.1:{$PORT_ADMIN}
+	}
+
+	@staticAssets path /web/* /emoji/* /libs/* /avatars/* /badges/* /desktop/*
+	handle @staticAssets {
+		root * {$FLUXER_STATIC_ROOT}
+		header {
+			X-Content-Type-Options nosniff
+			Access-Control-Allow-Origin *
+			Cache-Control "public, max-age=3600, must-revalidate"
+		}
+		@hashedBadges path_regexp ^/badges/[0-9a-f]{16}\.(webp|png)$
+		header @hashedBadges {
+			defer
+			Cache-Control "public, max-age=31536000, immutable"
+		}
+		file_server
+	}
+
+	handle /.well-known/fluxer {
+		import upstream 127.0.0.1:{$PORT_API}
+	}
+
+	handle /.well-known/webfinger {
+		import upstream 127.0.0.1:{$PORT_API}
+	}
+
+	handle {
+		import upstream 127.0.0.1:{$PORT_APP_PROXY}
+	}
+}
+
+# Loopback listener the app proxy uses for instance discovery.
+http://127.0.0.1:{$PORT_DISCOVERY} {
+	bind 127.0.0.1
+	handle /.well-known/fluxer {
+		import upstream 127.0.0.1:{$PORT_API}
+	}
+}
