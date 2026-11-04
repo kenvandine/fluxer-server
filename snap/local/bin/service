@@ -35,7 +35,8 @@ postgres)
     mkdir -p "$pgrun" "$STATE/postgres"
     chown snap_daemon:snap_daemon "$STATE/postgres" "$pgrun"
     if [ ! -s "$pgdata/PG_VERSION" ]; then
-        rm -rf "$pgdata"
+        # root lacks CAP_DAC_OVERRIDE under confinement, so clean up as the owner
+        setpriv --reuid snap_daemon --regid snap_daemon --clear-groups rm -rf "$pgdata"
         pwfile="$(mktemp)"
         printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
         chown snap_daemon "$pwfile"
