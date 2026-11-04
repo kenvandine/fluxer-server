@@ -15,8 +15,9 @@ old=""
 render_env
 new="$(sha256sum "$ENV_FILE" | cut -d' ' -f1)"
 
-if [ -z "$old" ]; then
-    snapctl start --enable "$SNAP_INSTANCE_NAME" || true
-elif [ "$old" != "$new" ]; then
+# Enabling is idempotent and also repairs services left disabled after a
+# remove/reinstall that kept the existing data.
+snapctl start --enable "$SNAP_INSTANCE_NAME" || true
+if [ -n "$old" ] && [ "$old" != "$new" ]; then
     snapctl restart "$SNAP_INSTANCE_NAME" || true
 fi

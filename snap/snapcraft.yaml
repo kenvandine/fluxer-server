@@ -195,6 +195,8 @@ apps:
     command: bin/service edge
   setup-token:
     command: bin/setup-token
+  sign-in-link:
+    command: bin/sign-in-link
   psql:
     command: bin/psql
     plugs: [network]
@@ -446,6 +448,8 @@ parts:
       cp -a fluxer_api/dist "$out/fluxer_api/dist"
       cp -a fluxer_api/bin "$out/fluxer_api/bin"
       cp -a tsconfigs "$out/tsconfigs"
+      # /run/fluxer is not writable under confinement; move the operator socket.
+      grep -rl '"/run/fluxer/operator.sock"' "$out/fluxer_api/dist" | xargs sed -i 's#"/run/fluxer/operator.sock"#"/var/snap/fluxer-server/common/operator.sock"#'
       # Drop symlinks that point outside the snap (e.g. back to the build source).
       find "$out" -xtype l -delete
       find "$out" -type l | while read -r l; do
