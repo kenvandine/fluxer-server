@@ -36,7 +36,8 @@ postgres)
     chown snap_daemon:snap_daemon "$STATE/postgres" "$pgrun"
     # The data dir is 0700 snap_daemon and root lacks CAP_DAC_OVERRIDE, so the
     # check must run as the owner or an existing cluster looks empty and is wiped.
-    if ! setpriv --reuid snap_daemon --regid snap_daemon --clear-groups test -s "$pgdata/PG_VERSION"; then
+    if ! setpriv --reuid snap_daemon --regid snap_daemon --clear-groups \
+        /bin/bash -c '[ -s "$1" ]' _ "$pgdata/PG_VERSION"; then
         # root lacks CAP_DAC_OVERRIDE under confinement, so clean up as the owner
         setpriv --reuid snap_daemon --regid snap_daemon --clear-groups rm -rf "$pgdata"
         pwfile="$(mktemp)"
