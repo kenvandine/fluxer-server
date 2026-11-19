@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           latest="$(gh api --paginate 'repos/fluxerapp/fluxer/releases?per_page=100' \
             --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(startswith("fluxer-release@"))' \
-            | head -n1)"
+            | sed -n '1p')"
           [ -n "$latest" ] || { echo "no fluxer-release tag found" >&2; exit 1; }
           new="${latest#fluxer-release@}"
           current="$(sed -n 's/^version: "\(.*\)"$/\1/p' snap/snapcraft.yaml)"
