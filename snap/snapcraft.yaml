@@ -1,7 +1,7 @@
 name: fluxer-server
 title: Fluxer Server
 base: core26
-version: "2026.1104.180331"
+version: "2026.1118.90548"
 summary: Self-hosted Fluxer chat and voice server
 description: |
   Fluxer is a free and open source instant messaging and VoIP chat platform
@@ -343,7 +343,7 @@ parts:
     after: [rust-toolchain, node]
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages: [build-essential, pkg-config, libssl-dev, cmake, git, ca-certificates, curl]
     override-build: |
@@ -369,7 +369,7 @@ parts:
     after: [rust-toolchain]
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages:
       - aom-tools
@@ -431,7 +431,7 @@ parts:
     after: [node]
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages: [build-essential, gcc, libssl-dev, pkg-config, openssl, python3, git, ca-certificates]
     override-build: |
@@ -461,7 +461,7 @@ parts:
     after: [node, rust-toolchain]
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages: [build-essential, clang, curl, ca-certificates, git, brotli, findutils]
     override-build: |
@@ -482,7 +482,7 @@ parts:
   fluxer-static:
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages: [curl, ca-certificates]
     override-build: |
@@ -497,7 +497,7 @@ parts:
     after: [rust-toolchain]
     plugin: nil
     source: https://github.com/fluxerapp/fluxer.git
-    source-tag: fluxer-release@2026.1104.180331
+    source-tag: fluxer-release@2026.1118.90548
     source-depth: 1
     build-packages: [erlang, git, curl, make, gcc, g++, libc6-dev, ca-certificates]
     override-build: |
